@@ -89,14 +89,16 @@
   .view.hidden{display:none;}
 
   /* ---------- Week switcher ---------- */
-  .week-switcher{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:14px;}
+  /* [更新メモ 2026-07-09] ボタン見切れ対策: 折り返しを許可してモバイル幅でも全ボタンが表示されるように */
+  .week-switcher{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px 16px;margin-bottom:14px;}
   .week-switcher button{background:var(--white);border:1px solid var(--line);border-radius:20px;padding:6px 16px;font-size:13px;color:var(--indigo-deep);}
   .week-switcher button:hover{background:var(--paper-deep);}
   #weekLabel{font-family:var(--font-display);font-size:16px;font-weight:700;color:var(--indigo-deep);min-width:260px;text-align:center;}
 
   /* ---------- Board ---------- */
   .board-wrap{display:flex;gap:0;}
-  .binding{flex:0 0 16px;background:repeating-linear-gradient(180deg, var(--indigo) 0 3px, transparent 3px 14px);border-radius:4px 0 0 4px;position:relative;}
+  /* [更新メモ 2026-07-09] 左端の点線（ノート製本風の装飾）を非表示化。要素自体は残し、表示だけ消す */
+  .binding{display:none;flex:0 0 16px;background:repeating-linear-gradient(180deg, var(--indigo) 0 3px, transparent 3px 14px);border-radius:4px 0 0 4px;position:relative;}
   .board-scroll{flex:1;min-width:0;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch;}
   .board-grid{display:grid;grid-template-columns:78px repeat(7,minmax(148px,1fr));border-radius:0 6px 6px 6px;background:var(--white);box-shadow:0 2px 10px rgba(23,41,61,0.08);}
   .corner-cell{background:var(--paper-deep);}
@@ -353,7 +355,9 @@ const MEAL_TYPES = ['breakfast','lunch','dinner'];
 const MEAL_LABEL = {breakfast:'朝食',lunch:'昼食',dinner:'夕食'};
 const DAY_KEYS = ['mon','tue','wed','thu','fri','sat','sun'];
 const DAY_LABEL = {mon:'月',tue:'火',wed:'水',thu:'木',fri:'金',sat:'土',sun:'日'};
-const DAY_COLORS = ['#3B5B7E','#43607C','#556879','#6E7B4F','#8A7A4E','#B0602E','#C1440E'];
+/* [更新メモ 2026-07-09] 曜日ごとの個別7色グラデーションから、平日/休日(祝日含む)の2色構成に変更 */
+const WEEKDAY_COLOR = '#3B5B7E'; // 平日: 藍系
+const WEEKEND_COLOR = '#C1440E'; // 土日・祝日: 柿系
 const CATEGORIES = ['主菜','副菜','汁物','ご飯・麺','朝食','デザート・その他'];
 const SEASON_MONTH_LABEL = {1:'1月',2:'2月',3:'3月',4:'4月',5:'5月',6:'6月',7:'7月',8:'8月',9:'9月',10:'10月',11:'11月',12:'12月'};
 const SEASON_INGREDIENTS = {
@@ -388,6 +392,61 @@ let editingDishCtx = null; // {dayKey, mealType, dishId}
 function fmtDate(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`;}
 function getMonday(d){const date=new Date(d);const day=date.getDay();const diff=(day===0?-6:1-day);date.setDate(date.getDate()+diff);date.setHours(0,0,0,0);return date;}
 function addDaysStr(dateStr,n){const [y,m,d]=dateStr.split('-').map(Number);const dt=new Date(y,m-1,d);dt.setDate(dt.getDate()+n);return fmtDate(dt);}
+
+/* [更新メモ 2026-07-09] 日本の祝日判定を追加（土日と合わせてヘッダー色を柿系にするため）。
+   固定日祝日 + ハッピーマンデー + 春分/秋分（近似式）+ 振替休日 + 国民の休日を年単位で計算し、キャッシュする。
+   概算式のため将来的な祝日法改正には追随できない場合がある点に留意。 */
+const _holidayCache = {};
+function _nthMonday(year,month,n){ // n番目の月曜日のDateを返す
+  const d = new Date(year,month-1,1);
+  const first = (8 - d.getDay()) % 7 + 1; // 最初の月曜の日付
+  return new Date(year,month-1, first + (n-1)*7);
+}
+function _vernalEquinoxDay(year){ return Math.floor(20.8431 + 0.242194*(year-1980) - Math.floor((year-1980)/4)); }
+function _autumnalEquinoxDay(year){ return Math.floor(23.2488 + 0.242194*(year-1980) - Math.floor((year-1980)/4)); }
+function getJapaneseHolidays(year){
+  if(_holidayCache[year]) return _holidayCache[year];
+  const set = new Set();
+  const add=(m,d)=>set.add(fmtDate(new Date(year,m-1,d)));
+  add(1,1);                                   // 元日
+  add(1, _nthMonday(year,1,2).getDate());      // 成人の日(1月第2月曜)
+  add(2,11);                                   // 建国記念の日
+  if(year>=2020) add(2,23);                    // 天皇誕生日
+  add(3, _vernalEquinoxDay(year));              // 春分の日
+  add(4,29);                                   // 昭和の日
+  add(5,3); add(5,4); add(5,5);                 // 憲法記念日/みどりの日/こどもの日
+  add(7, _nthMonday(year,7,3).getDate());       // 海の日(7月第3月曜)
+  add(8,11);                                   // 山の日
+  add(9, _nthMonday(year,9,3).getDate());       // 敬老の日(9月第3月曜)
+  add(9, _autumnalEquinoxDay(year));            // 秋分の日
+  add(10, _nthMonday(year,10,2).getDate());     // スポーツの日(10月第2月曜)
+  add(11,3);                                   // 文化の日
+  add(11,23);                                  // 勤労感謝の日
+  // 国民の休日: 前後を祝日に挟まれた平日
+  Array.from(set).forEach(ds=>{
+    const next = addDaysStr(ds,2);
+    if(set.has(next)){
+      const between = addDaysStr(ds,1);
+      const dow = new Date(between+'T00:00:00').getDay();
+      if(dow!==0 && dow!==6) set.add(between);
+    }
+  });
+  // 振替休日: 日曜が祝日の場合、直後の非祝日を休日に
+  Array.from(set).forEach(ds=>{
+    const dow = new Date(ds+'T00:00:00').getDay();
+    if(dow===0){
+      let sub = addDaysStr(ds,1);
+      while(set.has(sub)) sub = addDaysStr(sub,1);
+      set.add(sub);
+    }
+  });
+  _holidayCache[year] = set;
+  return set;
+}
+function isJapaneseHoliday(dateStr){
+  const year = Number(dateStr.split('-')[0]);
+  return getJapaneseHolidays(year).has(dateStr);
+}
 function jpDateLabel(dateStr){const [y,m,d]=dateStr.split('-').map(Number);return `${m}/${d}`;}
 function uid(){return 'id_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36);}
 function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -654,7 +713,11 @@ function renderBoard(){
   let html = `<div class="corner-cell"></div>`;
   DAY_KEYS.forEach((dk,i)=>{
     const d = wk.days[dk];
-    html += `<div class="day-tab" style="background:${DAY_COLORS[i]}"><div class="dname">${DAY_LABEL[dk]}</div><div class="ddate">${jpDateLabel(d.date)}</div></div>`;
+    // [更新メモ 2026-07-09] 平日=藍系/土日・祝日=柿系の2色判定
+    const isWeekendCol = (dk==='sat' || dk==='sun');
+    const isHolidayCol = isJapaneseHoliday(d.date);
+    const color = (isWeekendCol || isHolidayCol) ? WEEKEND_COLOR : WEEKDAY_COLOR;
+    html += `<div class="day-tab" style="background:${color}"><div class="dname">${DAY_LABEL[dk]}</div><div class="ddate">${jpDateLabel(d.date)}</div></div>`;
   });
 
   MEAL_TYPES.forEach(mt=>{
