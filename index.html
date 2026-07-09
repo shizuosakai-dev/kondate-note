@@ -1026,12 +1026,12 @@ window.requestAiSuggestions = async function(){
 - 食事の種類: ${MEAL_LABEL[editingDishCtx.mealType]}
 - 対象月: ${SEASON_MONTH_LABEL[m]}（旬の食材: ${seasonIngredients.join('、')}）
 - 対象人数: ${memberCount}人
-${excludeNote ? '- 配慮事項: '+excludeNote : ''}
+${excludeNote ? '- 必須条件（必ず守ること）: '+excludeNote : ''}
 ${stockSummary ? '- 優先して使い切りたい食材が家にあります。できるだけこれらを使う料理にしてください: '+stockSummary : ''}
 
 家族の好み（参考）: ${prefSummary}
 
-出力は必ず次のJSON配列のみ。前置き・説明・コードブロック記号は一切不要です。
+出力は必ず次のJSON配列のみ。前置き・説明・コードブロック記号は一切不要です。上記の必須条件に反する提案は絶対に行わないこと。
 [{"name":"料理名","category":"主菜または副菜または汁物","seasonTags":["${m>=3&&m<=5?'春':m>=6&&m<=8?'夏':m>=9&&m<=11?'秋':'冬'}"],"baseServings":${memberCount},"ingredients":[{"name":"材料名","qty":数値,"unit":"単位"}],"steps":["手順1","手順2","手順3"],"note":"一言メモ(30字以内)"}]
 材料は5個以内、手順は3ステップ以内で簡潔に。`;
 
@@ -1121,11 +1121,11 @@ window.requestBulkAiSuggestions = async function(){
 食事枠一覧（番号: 食事／人数／対象月）:
 ${slotsDesc}
 
-${excludeNote ? '配慮事項: '+excludeNote : ''}
+${excludeNote ? '必須条件（すべての枠で必ず守ること）: '+excludeNote : ''}
 ${stockSummary ? '優先して使い切りたい食材が家にあります。使える枠には積極的にこれらを使ってください: '+stockSummary : ''}
 家族の好み（参考）: ${prefSummary}
 
-出力は必ず次のJSON配列のみ。要素数は必ず${window._bulkSlots.length}個、slotIndexは上記の番号と対応させてください。前置き・説明・コードブロック記号は一切不要です。値は簡潔に。
+出力は必ず次のJSON配列のみ。要素数は必ず${window._bulkSlots.length}個、slotIndexは上記の番号と対応させてください。前置き・説明・コードブロック記号は一切不要です。値は簡潔に。上記の必須条件に反する提案は絶対に行わないこと。
 [{"slotIndex":0,"name":"料理名","category":"主菜","season":"季節タグ","baseServings":人数,"ingredients":[{"name":"材料名","qty":数値,"unit":"単位"}],"steps":["手順1","手順2"],"note":"一言(15字以内)"}]
 各料理の材料は3個以内、手順は2ステップ以内。装飾や前置きは一切不要、JSON配列だけを出力してください。`;
 
