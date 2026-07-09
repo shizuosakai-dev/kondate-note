@@ -937,7 +937,7 @@ async function fetchAnthropicText(prompt, useSearch){
   }
   const idToken = await currentUser.getIdToken();
   const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), 15000);
+  const timer = setTimeout(()=>controller.abort(), 300000); /* [更新メモ 2026-07-10] 切り分けのため一時的に300秒に延長。原因特定後は適切な値に戻すこと */
   try{
     const response = await fetch(CFG.workerUrl, {
       method:"POST",
