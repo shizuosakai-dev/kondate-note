@@ -209,9 +209,15 @@
   .bulk-toggle-btn.active{background:var(--persimmon);}
   .meal-cell{position:relative;}
   .meal-cell.selectable{outline:1px dashed var(--moss-soft);}
-  .meal-cell.locked-hint{opacity:.55;}
-  .slot-check{position:absolute;top:4px;right:4px;width:18px;height:18px;z-index:2;}
+  .meal-cell.locked-hint{opacity:.55;pointer-events:none;} /* [更新メモ 2026-07-10] 一括選択中はロック済みセルの誤操作を防止 */
   .meal-cell.selected{background:#EEF3E5;outline:2px solid var(--moss);}
+  /* [更新メモ 2026-07-10] チェックボックス廃止→セル全体タップで選択。member-toggle等より上層に重ねて誤タップを吸収 */
+  .slot-select-overlay{position:absolute;inset:0;z-index:5;cursor:pointer;}
+  .slot-select-overlay.checked::after{
+    content:'✓';position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;
+    background:var(--moss);color:var(--white);font-size:12px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,.25);
+  }
   .bulk-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--indigo-deep);color:var(--white);
     padding:10px 18px;border-radius:24px;display:flex;align-items:center;gap:14px;box-shadow:0 6px 22px rgba(0,0,0,.3);z-index:90;font-size:13px;}
   .bulk-bar.hidden{display:none;}
@@ -731,7 +737,7 @@ function renderBoard(){
       if(state.bulkMode){ cellClasses += open ? ' selectable' : ' locked-hint'; if(selected) cellClasses += ' selected'; }
       html += `<div class="${cellClasses}">`;
       if(state.bulkMode && open){
-        html += `<input type="checkbox" class="slot-check" data-day="${dk}" data-meal="${mt}" ${selected?'checked':''} onchange="onSlotCheck(this)">`;
+        html += `<div class="slot-select-overlay ${selected?'checked':''}" data-action="toggle-slot" data-day="${dk}" data-meal="${mt}"></div>`;
       }
       html += `<div class="attendee-row">` + MEMBERS.map(m=>
         `<button class="mem-toggle ${slot.attendees.includes(m)?'on':'off'}" data-action="toggle-att" data-day="${dk}" data-meal="${mt}" data-member="${m}" title="${MEMBER_LABEL[m]}">${MEMBER_ICON[m]}</button>`
@@ -757,17 +763,17 @@ function setBulkMode(on){
   updateBulkBar();
   renderBoard();
 }
-window.onSlotCheck = function(el){
-  const key = el.dataset.day+'|'+el.dataset.meal;
-  if(el.checked){
-    if(state.bulkSelected.size>=4){ el.checked=false; toast('一度に選べるのは最大4件です'); return; }
-    state.bulkSelected.add(key);
-  }else{
+function toggleBulkSelect(dayKey, mealType){
+  const key = dayKey+'|'+mealType;
+  if(state.bulkSelected.has(key)){
     state.bulkSelected.delete(key);
+  }else{
+    if(state.bulkSelected.size>=4){ toast('一度に選べるのは最大4件です'); return; }
+    state.bulkSelected.add(key);
   }
-  el.closest('.meal-cell').classList.toggle('selected', el.checked);
+  renderBoard();
   updateBulkBar();
-};
+}
 function updateBulkBar(){
   const bar = document.getElementById('bulkBar');
   const n = state.bulkSelected.size;
@@ -790,6 +796,8 @@ function renderDishChip(dish, dayKey, mealType){
 }
 
 async function onBoardClick(e){
+  const slotOverlay = e.target.closest('[data-action="toggle-slot"]');
+  if(slotOverlay){ toggleBulkSelect(slotOverlay.dataset.day, slotOverlay.dataset.meal); return; }
   const attBtn = e.target.closest('[data-action="toggle-att"]');
   if(attBtn){ await toggleAttendee(attBtn.dataset.day, attBtn.dataset.meal, attBtn.dataset.member); return; }
   const addBtn = e.target.closest('[data-action="add-dish"]');
