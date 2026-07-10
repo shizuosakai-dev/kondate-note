@@ -1188,12 +1188,18 @@ window.requestBulkAiSuggestions = async function(){
     const itemsInstruction = itemsPerSlot===2
       ? `各食事枠につき、主菜1品・副菜1品の合計2品を、一般的な家庭料理の知識をもとに手早く提案してください。同じ枠のslotIndexを2回使い、1つ目はcategory:"主菜"、2つ目はcategory:"副菜"または"汁物"のいずれか（汁物も副菜の役割として構いません）にしてください。`
       : `各食事枠につき、一般的な家庭料理の知識をもとに、現実的な料理を1品ずつ手早く提案してください。`;
-    const prompt = `あなたは家庭料理のアイデアを提案する専門家です。以下の${batchSlots.length}個の食事枠それぞれについて提案してください。${itemsInstruction}枠同士で料理が重複しないよう、また同じ調理法（揚げ物続きなど）に偏らないようバランスよくしてください。ウェブ検索は不要です。
+    // [更新メモ 2026-07-10] バッチ分割により各回のAPI呼び出しが独立しているため、
+    // これまでの回で確定した提案済み料理名を明示的に伝えて表記違いの重複を防ぐ
+    const proposedNamesSoFar = window._bulkCandidates.map(c=>c.name);
+    const alreadyProposedNote = proposedNamesSoFar.length
+      ? `既に他の回で次の料理を提案済みです。配慮事項で意図的に同じメニューにするよう指定されている場合を除き、これらと同じ料理、または「生姜焼き」と「しょうが焼き」、「冷奴」と「冷ややっこ」のような表記・言い換え違いの実質同じ料理も重複として避けてください: ${proposedNamesSoFar.join('、')}\n`
+      : '';
+    const prompt = `あなたは家庭料理のアイデアを提案する専門家です。以下の${batchSlots.length}個の食事枠それぞれについて提案してください。${itemsInstruction}枠同士で料理が重複しないよう（表記だけ変えた同一料理も重複とみなすこと）、また同じ調理法（揚げ物続きなど）に偏らないようバランスよくしてください。ウェブ検索は不要です。
 
 食事枠一覧（番号: 食事／人数／対象月。slotIndexは必ず番号（${allowedIndexes}）のいずれかをそのまま使うこと）:
 ${slotsDesc}
 
-${excludeNote ? '必須条件（すべての枠で必ず守ること）: '+excludeNote : ''}
+${alreadyProposedNote}${excludeNote ? '必須条件（すべての枠で必ず守ること）: '+excludeNote : ''}
 ${stockSummary ? '優先して使い切りたい食材が家にあります。使える枠には積極的にこれらを使ってください: '+stockSummary : ''}
 家族の好み（参考）: ${prefSummary}
 
