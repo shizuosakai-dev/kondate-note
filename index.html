@@ -1098,6 +1098,10 @@ function openBulkAiModal(){
     const [dk,mt] = key.split('|');
     const slot = wk.days[dk][mt];
     return {key, dayKey:dk, mealType:mt, date:wk.days[dk].date, memberCount: slot.attendees.length||4};
+  }).sort((a,b)=>{
+    // [更新メモ 2026-07-10] 選択順ではなく日付順（同日なら朝食→昼食→夕食）で並べる
+    if(a.date!==b.date) return a.date<b.date?-1:1;
+    return MEAL_TYPES.indexOf(a.mealType)-MEAL_TYPES.indexOf(b.mealType);
   });
   const html = `
     <button class="modal-close" onclick="closeModal()">✕</button>
@@ -1118,85 +1122,104 @@ window.requestBulkAiSuggestions = async function(){
   const btn = document.getElementById('bulkRequestBtn');
   const resultsEl = document.getElementById('bulkResults');
   btn.disabled = true;
-  resultsEl.innerHTML = `<div class="loading-line">${window._bulkSlots.length}件分の献立を検索・提案中...少しお待ちください</div>`;
   const excludeNote = document.getElementById('bulkExclude').value.trim();
   const itemsPerSlot = Number(document.getElementById('bulkItemsPerSlot').value) || 1; // [更新メモ 2026-07-10] 1食あたりの品数（1品 or 主菜+副菜2品）
-  const totalItems = window._bulkSlots.length * itemsPerSlot;
   const prefSummary = buildPreferenceSummary();
   const stockSummary = buildStockSummary();
-  const slotsDesc = window._bulkSlots.map((s,i)=>{
-    const m = monthOf(s.date);
-    return `${i}: ${MEAL_LABEL[s.mealType]}／${s.memberCount}人／${SEASON_MONTH_LABEL[m]}`;
-  }).join('\n');
-  // [更新メモ 2026-07-10] 品数指定を「1品ずつ」固定の文言と統一し、矛盾しないよう動的に生成
-  const itemsInstruction = itemsPerSlot===2
-    ? `各食事枠につき、主菜1品・副菜1品の合計2品を、一般的な家庭料理の知識をもとに手早く提案してください。同じ枠のslotIndexを2回使い、片方をcategory:"主菜"、もう片方をcategory:"副菜"にしてください。`
-    : `各食事枠につき、一般的な家庭料理の知識をもとに、現実的な料理を1品ずつ手早く提案してください。`;
-  const prompt = `あなたは家庭料理のアイデアを提案する専門家です。以下の${window._bulkSlots.length}個の食事枠それぞれについて提案してください。${itemsInstruction}枠同士で料理が重複しないよう、また同じ調理法（揚げ物続きなど）に偏らないようバランスよくしてください。ウェブ検索は不要です。
 
-食事枠一覧（番号: 食事／人数／対象月）:
+  /* [更新メモ 2026-07-10] 1回のAPI呼び出しで要求する品数が多いと出力がmax_tokensで途中切れするため、
+     1バッチあたり最大4品（＝itemsPerSlot=1で4枠を一括提案していた頃の実績値）に収まるよう
+     食事枠を分割し、複数回に分けて順にAPIを呼び出す。品質（材料数・手順数）は落とさない。 */
+  const MAX_ITEMS_PER_BATCH = 4;
+  const slotsPerBatch = Math.max(1, Math.floor(MAX_ITEMS_PER_BATCH / itemsPerSlot));
+  const slotsWithIndex = window._bulkSlots.map((s,idx)=>({...s, _globalIndex:idx}));
+  const batches = [];
+  for(let i=0;i<slotsWithIndex.length;i+=slotsPerBatch){
+    batches.push(slotsWithIndex.slice(i, i+slotsPerBatch));
+  }
+
+  window._bulkCandidates = [];
+  resultsEl.innerHTML = '';
+
+  function renderCandidateCard(c, idx){
+    const slot = window._bulkSlots[c.slotIndex];
+    const matched = stockMatchNames(c.ingredients||[]);
+    return `<div class="bulk-group-title">${slot?DAY_LABEL[slot.dayKey]+'曜 '+MEAL_LABEL[slot.mealType]:'?'}</div>
+    <div class="bulk-candidate">
+      <input type="checkbox" checked data-idx="${idx}" class="bulkPick">
+      <div style="flex:1;">
+        <div class="rc-name">${itemsPerSlot===2?`<span class="tag-pill" style="background:var(--indigo);margin-right:4px;">${escapeHtml(c.category||'')}</span>`:''}${escapeHtml(c.name)}</div>
+        <div class="rc-meta">${escapeHtml((c.ingredients||[]).map(i=>i.name).join('、'))}</div>
+        ${c.note?`<div class="rc-meta">${escapeHtml(c.note)}</div>`:''}
+        ${matched.length?`<div class="rc-tags"><span class="tag-pill stock-match">在庫活用: ${escapeHtml(matched.join('、'))}</span></div>`:''}
+      </div>
+    </div>`;
+  }
+
+  for(let b=0;b<batches.length;b++){
+    const batchSlots = batches[b];
+    const loadingId = `bulkBatchLoading${b}`;
+    resultsEl.insertAdjacentHTML('beforeend', `<div class="loading-line" id="${loadingId}">${b+1}/${batches.length}回目を提案中（${batchSlots.length*itemsPerSlot}品）...少しお待ちください</div>`);
+
+    const totalItems = batchSlots.length * itemsPerSlot;
+    const allowedIndexes = batchSlots.map(s=>s._globalIndex).join('、');
+    const slotsDesc = batchSlots.map(s=>{
+      const m = monthOf(s.date);
+      return `${s._globalIndex}: ${MEAL_LABEL[s.mealType]}／${s.memberCount}人／${SEASON_MONTH_LABEL[m]}`;
+    }).join('\n');
+    const itemsInstruction = itemsPerSlot===2
+      ? `各食事枠につき、主菜1品・副菜1品の合計2品を、一般的な家庭料理の知識をもとに手早く提案してください。同じ枠のslotIndexを2回使い、片方をcategory:"主菜"、もう片方をcategory:"副菜"にしてください。`
+      : `各食事枠につき、一般的な家庭料理の知識をもとに、現実的な料理を1品ずつ手早く提案してください。`;
+    const prompt = `あなたは家庭料理のアイデアを提案する専門家です。以下の${batchSlots.length}個の食事枠それぞれについて提案してください。${itemsInstruction}枠同士で料理が重複しないよう、また同じ調理法（揚げ物続きなど）に偏らないようバランスよくしてください。ウェブ検索は不要です。
+
+食事枠一覧（番号: 食事／人数／対象月。slotIndexは必ず番号（${allowedIndexes}）のいずれかをそのまま使うこと）:
 ${slotsDesc}
 
 ${excludeNote ? '必須条件（すべての枠で必ず守ること）: '+excludeNote : ''}
 ${stockSummary ? '優先して使い切りたい食材が家にあります。使える枠には積極的にこれらを使ってください: '+stockSummary : ''}
 家族の好み（参考）: ${prefSummary}
 
-出力は必ず次のJSON配列のみ。要素数は必ず${totalItems}個（食事枠数${window._bulkSlots.length}×1食あたり${itemsPerSlot}品）、slotIndexは上記の番号と対応させてください。前置き・説明・コードブロック記号は一切不要です。値は簡潔に。上記の必須条件に反する提案は絶対に行わないこと。
+出力は必ず次のJSON配列のみ。要素数は必ず${totalItems}個。前置き・説明・コードブロック記号は一切不要です。値は簡潔に。上記の必須条件に反する提案は絶対に行わないこと。
 [{"slotIndex":0,"name":"料理名","category":"主菜","season":"季節タグ","baseServings":人数,"ingredients":[{"name":"材料名","qty":数値,"unit":"単位"}],"steps":["手順1","手順2"],"note":"一言(15字以内)"}]
 各料理の材料は3個以内、手順は2ステップ以内。装飾や前置きは一切不要、JSON配列だけを出力してください。`;
 
-  let rawText = '';
-  try{
-    rawText = await fetchAnthropicText(prompt, false);
-    const arr = parseAiJson(rawText);
-    if(!Array.isArray(arr) || !arr.length) throw new Error('empty');
-    window._bulkCandidates = arr;
-    resultsEl.innerHTML = `
-      ${arr.map((c,idx)=>{
-        const slot = window._bulkSlots[c.slotIndex!=null?c.slotIndex:idx];
-        const matched = stockMatchNames(c.ingredients||[]);
-        return `<div class="bulk-group-title">${slot?DAY_LABEL[slot.dayKey]+'曜 '+MEAL_LABEL[slot.mealType]:'?'}</div>
-        <div class="bulk-candidate">
-          <input type="checkbox" checked data-idx="${idx}" class="bulkPick">
-          <div style="flex:1;">
-            <div class="rc-name">${itemsPerSlot===2?`<span class="tag-pill" style="background:var(--indigo);margin-right:4px;">${escapeHtml(c.category||'')}</span>`:''}${escapeHtml(c.name)}</div>
-            <div class="rc-meta">${escapeHtml((c.ingredients||[]).map(i=>i.name).join('、'))}</div>
-            <div class="rc-meta">${escapeHtml(c.note||'')}</div>
-            ${matched.length?`<div class="rc-tags"><span class="tag-pill stock-match">在庫活用: ${escapeHtml(matched.join('、'))}</span></div>`:''}
-          </div>
-        </div>`;
-      }).join('')}
-      <button class="btn" style="margin-top:8px;" onclick="applyBulkSelections()">選んだ提案をまとめて献立に反映</button>
-    `;
-  }catch(e){
-    console.error('bulk ai suggestion failed, falling back to offline suggestions', e, rawText);
-    const stockNames = state.stock.map(s=>s.name);
-    const usedNames = [];
-    const arr = [];
-    window._bulkSlots.forEach((slot,idx)=>{
-      // [更新メモ 2026-07-10] オフライン提案でもitemsPerSlot分（主菜+副菜など）を生成
-      for(let n=0;n<itemsPerSlot;n++){
-        const [cand] = getOfflineSuggestions({count:1, memberCount:slot.memberCount, excludeNames:usedNames, stockNames});
-        if(cand){ usedNames.push(cand.name); arr.push({...cand, slotIndex:idx}); }
-      }
-    });
-    window._bulkCandidates = arr;
-    resultsEl.innerHTML = `<div class="empty-hint" style="text-align:left;padding:6px 0;">AI提案が利用できませんでした（詳細: ${escapeHtml(e.message||String(e))}）。代わりに旬・好み・在庫を考慮した定番レシピから提案します。</div>` +
-      arr.map((c,idx)=>{
-        const slot = window._bulkSlots[c.slotIndex];
-        const matched = stockMatchNames(c.ingredients||[]);
-        return `<div class="bulk-group-title">${slot?DAY_LABEL[slot.dayKey]+'曜 '+MEAL_LABEL[slot.mealType]:'?'}</div>
-        <div class="bulk-candidate">
-          <input type="checkbox" checked data-idx="${idx}" class="bulkPick">
-          <div style="flex:1;">
-            <div class="rc-name">${itemsPerSlot===2?`<span class="tag-pill" style="background:var(--indigo);margin-right:4px;">${escapeHtml(c.category||'')}</span>`:''}${escapeHtml(c.name)}</div>
-            <div class="rc-meta">${escapeHtml((c.ingredients||[]).map(i=>i.name).join('、'))}</div>
-            ${matched.length?`<div class="rc-tags"><span class="tag-pill stock-match">在庫活用: ${escapeHtml(matched.join('、'))}</span></div>`:''}
-          </div>
-        </div>`;
-      }).join('') +
-      (arr.length ? `<button class="btn" style="margin-top:8px;" onclick="applyBulkSelections()">選んだ提案をまとめて献立に反映</button>` : '');
+    let arr = [];
+    let usedFallback = false;
+    let errMsg = '';
+    try{
+      const rawText = await fetchAnthropicText(prompt, false);
+      arr = parseAiJson(rawText);
+      if(!Array.isArray(arr) || !arr.length) throw new Error('empty');
+      // [更新メモ 2026-07-10] JSONが途中で切れた際、parseAiJsonの部分救出ロジックがingredients断片等を
+      // 誤って候補として拾うことがあるため、slotIndexがこのバッチの対象内かつnameを持つものだけを候補として採用する
+      const allowedSet = new Set(batchSlots.map(s=>s._globalIndex));
+      arr = arr.filter(c=>c && typeof c.name==='string' && c.name.trim() && c.slotIndex!=null && allowedSet.has(c.slotIndex));
+      if(!arr.length) throw new Error('この回はAI応答を解析できませんでした（出力が途中で切れた可能性があります）');
+    }catch(e){
+      console.error('bulk ai suggestion batch failed, falling back to offline suggestions', b, e);
+      errMsg = e.message||String(e);
+      usedFallback = true;
+      const stockNames = state.stock.map(s=>s.name);
+      const usedNames = window._bulkCandidates.map(c=>c.name).concat(arr.map(c=>c.name));
+      arr = [];
+      batchSlots.forEach(s=>{
+        for(let n=0;n<itemsPerSlot;n++){
+          const [cand] = getOfflineSuggestions({count:1, memberCount:s.memberCount, excludeNames:usedNames, stockNames});
+          if(cand){ usedNames.push(cand.name); arr.push({...cand, slotIndex:s._globalIndex}); }
+        }
+      });
+    }
+
+    const startIdx = window._bulkCandidates.length;
+    window._bulkCandidates = window._bulkCandidates.concat(arr);
+    const batchHtml = (usedFallback ? `<div class="empty-hint" style="text-align:left;padding:6px 0;">${b+1}回目はAI提案が利用できませんでした（詳細: ${escapeHtml(errMsg)}）。代わりに旬・好み・在庫を考慮した定番レシピから提案します。</div>` : '') +
+      arr.map((c,i)=>renderCandidateCard(c, startIdx+i)).join('');
+    document.getElementById(loadingId).outerHTML = batchHtml;
   }
+
+  resultsEl.insertAdjacentHTML('beforeend', window._bulkCandidates.length
+    ? `<button class="btn" style="margin-top:8px;" onclick="applyBulkSelections()">選んだ提案をまとめて献立に反映</button>`
+    : `<div class="empty-hint">提案を取得できませんでした。</div>`);
   btn.disabled = false;
 };
 window.applyBulkSelections = async function(){
