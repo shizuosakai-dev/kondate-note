@@ -405,7 +405,9 @@ let state = {
   weekCache:{},
   stock:[],
   bulkMode:false,
-  bulkSelected:new Set() // "dayKey|mealType"
+  bulkSelected:new Set(), // "dayKey|mealType"
+  /* [更新メモ 2026-07-13] 表記ゆれ名寄せ用マスター（alias_name|alias_unit -> {name,unit,factor}） */
+  unitMaster:{}
 };
 let editingDishCtx = null; // {dayKey, mealType, dishId}
 
@@ -633,6 +635,12 @@ async function init(){
   renderSeasonTicker();
   bindNav();
   renderAll();
+
+  /* [更新メモ 2026-07-13] 単位マスターはアプリ起動をブロックしないようバックグラウンドで取得し、
+     完了後に買い出しリスト表示中であれば再描画する */
+  loadUnitMaster().then(()=>{
+    if(state.view==='shopping') renderShopping();
+  });
 }
 
 async function loadOrCreateWeek(weekStart){
@@ -1484,6 +1492,84 @@ const CATEGORY_MAP_HINTS = [
   {cat:'穀物・粉物', words:['米','パン','うどん','パスタ','そば','片栗粉','小麦粉','グラノーラ']},
   {cat:'調味料', words:['醤油','みりん','酒','砂糖','塩','味噌','油','酢','だし']}
 ];
+/* ================= 単位マスター（表記ゆれ名寄せ） [更新メモ 2026-07-13] ================= */
+// Google スプレッドシート「ウェブに公開→CSV」のURL。認証不要の読み取り専用データのためコード内に直接記載。
+const UNIT_MASTER_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQTkOiVK4f1U-xLuCuzjGC2meegtDhsv3HDJKZOsC_5TU2L8CR_S4GC6-C5GYjnZKhh-Ki49dtTJIel/pub?output=csv';
+
+// シンプルなCSVパーサ（ダブルクォート囲み・カンマ・改行エスケープに対応）
+function parseCsv(text){
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for(let i=0;i<text.length;i++){
+    const c = text[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(text[i+1] === '"'){ field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if(c === '"') inQuotes = true;
+      else if(c === ','){ row.push(field); field=''; }
+      else if(c === '\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+      else if(c === '\r'){ /* skip */ }
+      else field += c;
+    }
+  }
+  if(field.length || row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(v => v && v.trim() !== ''));
+}
+
+// 単位マスターを取得してstate.unitMasterに格納する。
+// 列: alias_name, alias_unit, canonical_name, canonical_unit, factor（canonical_unitへの換算係数）
+// 取得・パースに失敗した場合は空のまま＝名寄せなしで従来通り動作する（フェイルセーフ）
+async function loadUnitMaster(){
+  try{
+    const controller = new AbortController();
+    const timeoutId = setTimeout(()=>controller.abort(), 5000);
+    const res = await fetch(UNIT_MASTER_CSV_URL, {signal:controller.signal});
+    clearTimeout(timeoutId);
+    if(!res.ok) throw new Error('status '+res.status);
+    const text = await res.text();
+    const rows = parseCsv(text);
+    if(!rows.length) return;
+    const header = rows[0].map(h=>(h||'').trim());
+    const idx = {
+      aliasName: header.indexOf('alias_name'),
+      aliasUnit: header.indexOf('alias_unit'),
+      canonicalName: header.indexOf('canonical_name'),
+      canonicalUnit: header.indexOf('canonical_unit'),
+      factor: header.indexOf('factor')
+    };
+    if(idx.aliasName===-1 || idx.canonicalName===-1){
+      console.warn('unitMaster: 想定と異なるヘッダー列です', header);
+      return;
+    }
+    const map = {};
+    rows.slice(1).forEach(r=>{
+      const aliasName = (r[idx.aliasName]||'').trim();
+      const aliasUnit = idx.aliasUnit>-1 ? (r[idx.aliasUnit]||'').trim() : '';
+      const canonicalName = (r[idx.canonicalName]||'').trim();
+      const rawCanonicalUnit = idx.canonicalUnit>-1 ? (r[idx.canonicalUnit]||'').trim() : '';
+      const canonicalUnit = rawCanonicalUnit || aliasUnit;
+      const factorRaw = idx.factor>-1 ? Number(r[idx.factor]) : 1;
+      if(!aliasName || !canonicalName) return;
+      const key = aliasName+'|'+aliasUnit;
+      map[key] = { name: canonicalName, unit: canonicalUnit, factor: (isFinite(factorRaw) && factorRaw>0) ? factorRaw : 1 };
+    });
+    state.unitMaster = map;
+  }catch(e){
+    console.warn('単位マスターの取得に失敗しました。名寄せなしで動作します。', e);
+  }
+}
+
+// 食材名・単位・数量をマスターに基づいて正規化する（未登録の組み合わせは元の値をそのまま返す＝安全側）
+function normalizeIngredient(name, unit, qty){
+  const key = name+'|'+(unit||'');
+  const hit = state.unitMaster[key];
+  if(!hit) return { name, unit: unit||'', qty };
+  return { name: hit.name, unit: hit.unit, qty: qty * hit.factor };
+}
+
 function categoryOf(name){
   for(const g of CATEGORY_MAP_HINTS){ if(g.words.some(w=>name.includes(w))) return g.cat; }
   return 'その他';
@@ -1499,9 +1585,11 @@ function computeShoppingList(){
         if(!recipe) return;
         const factor = recipe.baseServings ? (dish.members.length/recipe.baseServings) : 1;
         (recipe.ingredients||[]).forEach(ing=>{
-          const key = ing.name+'|'+(ing.unit||'');
-          if(!agg[key]) agg[key] = {name:ing.name, unit:ing.unit||'', qty:0};
-          agg[key].qty += (Number(ing.qty)||0) * factor;
+          /* [更新メモ 2026-07-13] 単位マスターで表記ゆれを正規化してから集計する */
+          const norm = normalizeIngredient(ing.name, ing.unit||'', (Number(ing.qty)||0) * factor);
+          const key = norm.name+'|'+norm.unit;
+          if(!agg[key]) agg[key] = {name:norm.name, unit:norm.unit, qty:0};
+          agg[key].qty += norm.qty;
         });
       });
     });
