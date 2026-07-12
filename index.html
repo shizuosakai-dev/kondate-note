@@ -114,16 +114,23 @@
     letter-spacing:.15em;border-right:1px solid var(--line);border-top:1px solid var(--line);
   }
   .meal-cell{border-right:1px solid var(--line);border-top:1px solid var(--line);padding:8px;display:flex;flex-direction:column;gap:6px;min-height:118px;background:var(--white);}
-  .attendee-row{display:flex;gap:3px;}
+  .attendee-row{display:flex;gap:3px;margin-top:4px;}
   .mem-toggle{border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:13px;padding:2px 4px;line-height:1;opacity:.35;filter:grayscale(1);}
   .mem-toggle.on{opacity:1;filter:none;background:var(--white);border-color:var(--moss-soft);}
+  /* [更新メモ 2026-07-10] 参加者を人数バッジ表示に簡略化。タップで内訳（従来のアイコン群）を開閉 */
+  .attendee-summary{list-style:none;cursor:pointer;font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:4px;user-select:none;}
+  .attendee-summary::-webkit-details-marker{display:none;}
+  .attendee-summary::before{content:'▸';font-size:9px;color:var(--indigo);transition:transform .15s;}
+  .attendee-details[open] .attendee-summary::before{transform:rotate(90deg);}
+  .attendee-count-badge{background:var(--paper-deep);border-radius:5px;padding:1px 6px;font-weight:600;color:var(--indigo-deep);}
   .dish-chip{
     display:flex;align-items:center;gap:5px;background:var(--paper);border:1px solid var(--line);
     border-radius:7px;padding:4px 7px;font-size:12px;cursor:pointer;
   }
   .dish-chip:hover{border-color:var(--indigo);}
   .dish-chip.empty{border-style:dashed;color:var(--ink-soft);}
-  .dish-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  /* [更新メモ 2026-07-10] 料理名を1行省略→2行まで折り返し表示に変更（セル高さは可変化） */
+  .dish-name{flex:1;white-space:normal;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3;}
   .dish-rating{color:var(--persimmon);font-weight:700;font-size:11px;}
   .dish-fixed-badge{font-size:9px;background:var(--moss);color:var(--white);border-radius:4px;padding:1px 4px;}
   .add-dish-btn{margin-top:auto;background:none;border:1px dashed var(--line);border-radius:7px;padding:4px;font-size:11px;color:var(--indigo);}
@@ -739,9 +746,11 @@ function renderBoard(){
       if(state.bulkMode && open){
         html += `<div class="slot-select-overlay ${selected?'checked':''}" data-action="toggle-slot" data-day="${dk}" data-meal="${mt}"></div>`;
       }
+      /* [更新メモ 2026-07-10] 参加者アイコン常時4個表示→人数バッジに簡略化。タップで内訳を展開 */
+      html += `<details class="attendee-details"><summary class="attendee-summary"><span class="attendee-count-badge">${slot.attendees.length}/${MEMBERS.length}人</span>参加</summary>`;
       html += `<div class="attendee-row">` + MEMBERS.map(m=>
         `<button class="mem-toggle ${slot.attendees.includes(m)?'on':'off'}" data-action="toggle-att" data-day="${dk}" data-meal="${mt}" data-member="${m}" title="${MEMBER_LABEL[m]}">${MEMBER_ICON[m]}</button>`
-      ).join('') + `</div>`;
+      ).join('') + `</div></details>`;
       slot.dishes.forEach(dish=>{ html += renderDishChip(dish, dk, mt); });
       html += `<button class="add-dish-btn" data-action="add-dish" data-day="${dk}" data-meal="${mt}">＋ 料理を追加</button>`;
       html += `</div>`;
