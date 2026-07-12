@@ -345,6 +345,14 @@
       <button class="btn small secondary" id="applyTemplateBtn">今表示中の週の未設定分に適用</button>
     </div>
     <div class="panel">
+      <h2>買い出しリスト</h2>
+      <!-- [更新メモ 2026-07-12] 調味料カテゴリの表示ON/OFFトグル -->
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
+        <input type="checkbox" id="showSeasoningsToggle">
+        調味料も買い出しリストに表示する（デフォルトは非表示）
+      </label>
+    </div>
+    <div class="panel">
       <h2>データ管理</h2>
       <button class="btn small secondary" id="exportBtn">全データをJSONでダウンロード（バックアップ）</button>
     </div>
@@ -562,7 +570,9 @@ function defaultSettings(){
     fixedMenus:[
       {id:'fm_father_granola',members:['father'],mealType:'breakfast',days:'all',recipeId:'r_granola'},
       {id:'fm_kids_bread',members:['son','daughter'],mealType:'breakfast',days:'weekday',recipeId:'r_bread_sausage'}
-    ]
+    ],
+    /* [更新メモ 2026-07-12] 買い出しリストに調味料カテゴリを表示するかどうか。デフォルトは非表示（常備品前提）。 */
+    showSeasoningsInShoppingList:false
   };
 }
 function seedRecipes(){
@@ -694,6 +704,12 @@ function bindNav(){
   document.getElementById('bulkCancelBtn').addEventListener('click', ()=>setBulkMode(false));
   document.getElementById('bulkGoBtn').addEventListener('click', openBulkAiModal);
   document.getElementById('stockAddBtn').addEventListener('click', addStockItem);
+  /* [更新メモ 2026-07-12] 調味料表示トグルの変更を保存し、買い出しリストに即時反映 */
+  document.getElementById('showSeasoningsToggle').addEventListener('change', async e=>{
+    state.settings.showSeasoningsInShoppingList = e.target.checked;
+    await saveSettings();
+    renderShopping();
+  });
 }
 
 function renderAll(){
@@ -1497,8 +1513,11 @@ function renderShopping(){
   const wk = state.weekCache[state.weekStart];
   wk.shoppingState = wk.shoppingState || {};
   const grouped = {};
+  /* [更新メモ 2026-07-12] 設定でOFFの場合、調味料カテゴリを買い出しリストから除外 */
+  const showSeasonings = !!state.settings.showSeasoningsInShoppingList;
   items.forEach(i=>{
     const cat = categoryOf(i.name);
+    if(cat==='調味料' && !showSeasonings) return;
     (grouped[cat] = grouped[cat]||[]).push(i);
   });
   const order = ['野菜','肉・魚','乳製品・卵','穀物・粉物','調味料','その他'];
@@ -1524,7 +1543,13 @@ window.toggleShopItem = async function(el){
 function copyShoppingText(){
   const items = computeShoppingList();
   const grouped = {};
-  items.forEach(i=>{ const cat=categoryOf(i.name); (grouped[cat]=grouped[cat]||[]).push(i); });
+  /* [更新メモ 2026-07-12] 設定でOFFの場合、調味料カテゴリをコピーテキストからも除外 */
+  const showSeasonings = !!state.settings.showSeasoningsInShoppingList;
+  items.forEach(i=>{
+    const cat=categoryOf(i.name);
+    if(cat==='調味料' && !showSeasonings) return;
+    (grouped[cat]=grouped[cat]||[]).push(i);
+  });
   let text = `【今週の買い出しリスト】(${jpDateLabel(state.weekStart)}〜${jpDateLabel(addDaysStr(state.weekStart,6))})\n`;
   Object.keys(grouped).forEach(cat=>{
     text += `\n■${cat}\n`;
@@ -1563,6 +1588,10 @@ function renderSettings(){
 
   renderTemplateBlock('tmplWeekday', state.settings.weekdayAttendees);
   renderTemplateBlock('tmplWeekend', state.settings.weekendAttendees);
+
+  /* [更新メモ 2026-07-12] 調味料表示トグルの状態を反映 */
+  const seasoningToggle = document.getElementById('showSeasoningsToggle');
+  if(seasoningToggle) seasoningToggle.checked = !!state.settings.showSeasoningsInShoppingList;
 }
 function renderTemplateBlock(elId, tmpl){
   const el = document.getElementById(elId);
